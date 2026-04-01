@@ -8,7 +8,8 @@
     rootIds: [],
     isProcessing: false,
     conversationFinished: false,
-    badgeTimeouts: new Map()
+    knowledgeMap: new Map(),    // nodeId -> [{id, type, text, source, resolved}]
+    expandedNodes: new Set()    // nodeIds currently expanded in tree
   };
 
   // === DOM refs ===
@@ -93,12 +94,28 @@
             removeTypingIndicator();
             appendMessage('architect', step.architectInterjection.text);
             applyTreeMutations(step.treeMutations);
-            advanceStep();
+
+            if (step.isFork && step.forkOptions) {
+              renderForkOptions(step.forkOptions);
+              // Do NOT advanceStep — wait for user to pick an option
+              state.isProcessing = false;
+              sendBtn.disabled = false;
+            } else {
+              advanceStep();
+            }
           }, 600);
         }, archDelay);
       } else {
         applyTreeMutations(step.treeMutations);
-        advanceStep();
+
+        if (step.isFork && step.forkOptions) {
+          renderForkOptions(step.forkOptions);
+          // Do NOT advanceStep — wait for user to pick an option
+          state.isProcessing = false;
+          sendBtn.disabled = false;
+        } else {
+          advanceStep();
+        }
       }
     }, aiDelay);
   }
@@ -111,10 +128,17 @@
       sendBtn.disabled = false;
       chatInput.placeholder = 'Conversation complete — review the feature tree.';
     } else {
-      state.isProcessing = false;
-      sendBtn.disabled = false;
-      prefillInput();
-      chatInput.focus();
+      var nextStep = SCENARIO.steps[state.currentStep];
+      if (nextStep && nextStep.isFork) {
+        // Auto-play fork steps without requiring user input
+        state.isProcessing = true;
+        playScriptedResponse(nextStep);
+      } else {
+        state.isProcessing = false;
+        sendBtn.disabled = false;
+        prefillInput();
+        chatInput.focus();
+      }
     }
   }
 
@@ -132,6 +156,36 @@
       prefillInput();
       chatInput.focus();
     }, 900);
+  }
+
+  // === Fork Rendering ===
+  function renderForkOptions(options) {
+    var container = document.createElement('div');
+    container.className = 'fork-options';
+
+    options.forEach(function (option) {
+      var btn = document.createElement('button');
+      btn.className = 'fork-option';
+      btn.textContent = option.label;
+      btn.addEventListener('click', function () {
+        container.remove();
+        appendMessage('user', option.label);
+        state.currentStep++;
+        if (state.currentStep >= SCENARIO.steps.length) {
+          state.conversationFinished = true;
+          chatInput.placeholder = 'Conversation complete — review the feature tree.';
+        } else {
+          prefillInput();
+          chatInput.focus();
+        }
+        state.isProcessing = false;
+        sendBtn.disabled = false;
+      });
+      container.appendChild(btn);
+    });
+
+    chatMessages.appendChild(container);
+    scrollToBottom();
   }
 
   // === Message Rendering ===
@@ -206,7 +260,7 @@
       id: nodeData.id,
       name: nodeData.name,
       score: nodeData.score || 0,
-      badge: nodeData.badge || null,
+
       parentId: nodeData.parent,
       children: []
     };
@@ -239,11 +293,9 @@
       state.rootIds = state.rootIds.filter(function (rid) { return rid !== id; });
     }
 
-    // Clear badge timeout
-    if (state.badgeTimeouts.has(id)) {
-      clearTimeout(state.badgeTimeouts.get(id));
-      state.badgeTimeouts.delete(id);
-    }
+    // Clean up knowledge data
+    state.knowledgeMap.delete(id);
+    state.expandedNodes.delete(id);
 
     // Remove children recursively
     node.children.forEach(function (cid) { removeNode(cid); });
@@ -257,9 +309,10 @@
     // Hide empty state
     treeEmpty.style.display = 'none';
 
-    // Split into removes, then other actions
+    // Split into phases: removes, transition, then other actions
     var removes = mutations.filter(function (m) { return m.action === 'remove'; });
-    var others = mutations.filter(function (m) { return m.action !== 'remove'; });
+    var transition = mutations.filter(function (m) { return m.action === 'transition'; })[0] || null;
+    var others = mutations.filter(function (m) { return m.action !== 'remove' && m.action !== 'transition'; });
 
     // Execute removes first (staggered)
     var removeDelay = 0;
@@ -270,15 +323,59 @@
       removeDelay += 150;
     });
 
-    // Then other mutations after removes complete
+    // If there's a transition overlay, show it after removes
+    var transitionDuration = 0;
+    if (transition) {
+      transitionDuration = transition.duration || 2500;
+      var transitionStart = removes.length > 0 ? removeDelay + 400 : 0;
+      setTimeout(function () {
+        showTreeTransition(transition.text || 'Restructuring...');
+      }, transitionStart);
+      setTimeout(function () {
+        hideTreeTransition();
+      }, transitionStart + transitionDuration);
+    }
+
+    // Then other mutations after removes + transition complete
     var otherStartDelay = removes.length > 0 ? removeDelay + 200 : 0;
+    if (transition) {
+      otherStartDelay = (removes.length > 0 ? removeDelay + 400 : 0) + transitionDuration + 200;
+    }
     var otherDelay = otherStartDelay;
     others.forEach(function (mutation) {
       setTimeout(function () {
         executeMutation(mutation);
       }, otherDelay);
-      otherDelay += 120;
+      otherDelay += 200;
     });
+  }
+
+  // === Tree Transition Overlay ===
+  function showTreeTransition(text) {
+    var existing = treeNodes.parentElement.querySelector('.tree-transition');
+    if (existing) existing.remove();
+
+    var overlay = document.createElement('div');
+    overlay.className = 'tree-transition';
+
+    var spinner = document.createElement('div');
+    spinner.className = 'tree-transition__spinner';
+
+    var label = document.createElement('div');
+    label.className = 'tree-transition__text';
+    label.textContent = text;
+
+    overlay.appendChild(spinner);
+    overlay.appendChild(label);
+    treeNodes.parentElement.appendChild(overlay);
+  }
+
+  function hideTreeTransition() {
+    var overlay = treeNodes.parentElement.querySelector('.tree-transition');
+    if (overlay) {
+      overlay.classList.add('tree-transition--fading');
+      setTimeout(function () { overlay.remove(); }, 400);
+    }
   }
 
   function executeMutation(mutation) {
@@ -295,13 +392,160 @@
       case 'remove':
         handleRemove(mutation.target);
         break;
+      case 'addItems':
+        handleAddItems(mutation.target, mutation.items);
+        break;
+      case 'resolveItem':
+        handleResolveItem(mutation.target, mutation.itemId);
+        break;
     }
   }
 
+  // === Knowledge Item Mutations ===
+  function handleAddItems(targetId, items) {
+    if (!state.knowledgeMap.has(targetId)) {
+      state.knowledgeMap.set(targetId, []);
+    }
+    var arr = state.knowledgeMap.get(targetId);
+    items.forEach(function (item) { arr.push(item); });
+
+    var el = treeNodes.querySelector('[data-id="' + targetId + '"]');
+    if (!el) return;
+
+    // If node is expanded, render new items into the items container
+    if (state.expandedNodes.has(targetId)) {
+      var itemsContainer = el.querySelector('.tree-node__items');
+      if (itemsContainer) {
+        items.forEach(function (item) {
+          var kiEl = renderKnowledgeItem(item);
+          kiEl.classList.add('ki--new');
+          itemsContainer.appendChild(kiEl);
+          // Remove highlight after 1500ms
+          setTimeout(function () {
+            kiEl.classList.remove('ki--new');
+          }, 1500);
+        });
+      }
+    }
+
+    updateNodeBadge(targetId);
+  }
+
+  function handleResolveItem(targetId, itemId) {
+    var items = state.knowledgeMap.get(targetId);
+    if (!items) return;
+
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].id === itemId) {
+        items[i].resolved = true;
+        break;
+      }
+    }
+
+    // Update DOM if visible
+    var el = treeNodes.querySelector('[data-id="' + targetId + '"]');
+    if (el) {
+      var kiEl = el.querySelector('[data-ki-id="' + itemId + '"]');
+      if (kiEl) {
+        kiEl.classList.add('ki--resolved');
+      }
+    }
+
+    updateNodeBadge(targetId);
+  }
+
+  // === Knowledge Item Rendering ===
+  function renderKnowledgeItem(item) {
+    var iconMap = {
+      fakt: '●',
+      frage: '?',
+      inferenz: '◌',
+      widerspruch: '⚠'
+    };
+
+    var el = document.createElement('div');
+    el.className = 'ki ki--' + item.type;
+    el.dataset.kiId = item.id;
+
+    if (item.resolved) {
+      el.classList.add('ki--resolved');
+    }
+
+    var icon = document.createElement('span');
+    icon.className = 'ki__icon';
+    icon.textContent = iconMap[item.type] || '●';
+
+    var source = document.createElement('span');
+    source.className = 'ki__source';
+    source.textContent = '(' + item.source + ')';
+
+    var text = document.createElement('span');
+    text.className = 'ki__text';
+    text.textContent = item.text;
+
+    el.appendChild(icon);
+    el.appendChild(source);
+    el.appendChild(text);
+
+    return el;
+  }
+
+  function renderCountBadge(nodeId) {
+    var items = state.knowledgeMap.get(nodeId) || [];
+    var facts = 0;
+    var questions = 0;
+    var inferences = 0;
+    var contradictions = 0;
+
+    items.forEach(function (item) {
+      if (item.type === 'fakt') facts++;
+      else if (item.type === 'frage' && !item.resolved) questions++;
+      else if (item.type === 'inferenz') inferences++;
+      else if (item.type === 'widerspruch') contradictions++;
+    });
+
+    var parts = [];
+    if (facts > 0) parts.push(facts + '●');
+    if (questions > 0) parts.push(questions + '?');
+    if (inferences > 0) parts.push(inferences + '◌');
+    if (contradictions > 0) parts.push(contradictions + '⚠');
+
+    return parts.join(' ');
+  }
+
+  function updateNodeBadge(nodeId) {
+    var el = treeNodes.querySelector('[data-id="' + nodeId + '"]');
+    if (!el) return;
+
+    var header = el.querySelector('.tree-node__header');
+    if (!header) return;
+
+    var badge = header.querySelector('.tree-node__count-badge');
+    var badgeText = renderCountBadge(nodeId);
+
+    if (!badgeText) {
+      if (badge) badge.style.display = 'none';
+      return;
+    }
+
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'tree-node__count-badge';
+      header.appendChild(badge);
+    }
+
+    badge.textContent = badgeText;
+    badge.style.display = '';
+  }
+
+  // === Tree Mutation Handlers ===
   function handleCreate(nodeData) {
     var node = addNode(nodeData);
     var depth = getDepth(node);
     var el = createNodeElement(node, depth);
+
+    // Initialize knowledge map entry
+    state.knowledgeMap.set(node.id, []);
 
     // Find insertion point
     var parentEl = null;
@@ -332,21 +576,6 @@
         el.classList.remove('tree-node--entering');
       });
     });
-
-    // Auto-clear badge
-    if (node.badge) {
-      var timeout = setTimeout(function () {
-        node.badge = null;
-        var badge = el.querySelector('.tree-node__badge');
-        if (badge) {
-          badge.style.opacity = '0';
-          badge.style.transition = 'opacity 0.3s ease';
-          setTimeout(function () { badge.remove(); }, 300);
-        }
-        state.badgeTimeouts.delete(node.id);
-      }, 4000);
-      state.badgeTimeouts.set(node.id, timeout);
-    }
   }
 
   function handleUpdate(targetId, changes) {
@@ -367,10 +596,6 @@
       if (scoreText) {
         scoreText.textContent = node.score + '%';
       }
-    }
-
-    if (changes.badge !== undefined) {
-      node.badge = changes.badge;
     }
 
     highlightNode(el);
@@ -429,21 +654,29 @@
     el.dataset.depth = depth;
     el.style.paddingLeft = (depth * 20 + 12) + 'px';
 
-    // Header row (name + badge)
+    // Header row (toggle + name + count badge)
     var header = document.createElement('div');
     header.className = 'tree-node__header';
+
+    var toggle = document.createElement('span');
+    toggle.className = 'tree-node__toggle';
+    toggle.textContent = '▶';
+    header.appendChild(toggle);
 
     var name = document.createElement('span');
     name.className = 'tree-node__name';
     name.textContent = node.name;
     header.appendChild(name);
 
-    if (node.badge) {
-      var badge = document.createElement('span');
-      badge.className = 'tree-node__badge badge--pulse';
-      badge.textContent = node.badge;
-      header.appendChild(badge);
-    }
+    var countBadge = document.createElement('span');
+    countBadge.className = 'tree-node__count-badge';
+    countBadge.style.display = 'none';
+    header.appendChild(countBadge);
+
+    // Click handler for expand/collapse
+    header.addEventListener('click', function () {
+      toggleNodeExpand(node.id, el);
+    });
 
     el.appendChild(header);
 
@@ -468,6 +701,12 @@
 
     el.appendChild(barRow);
 
+    // Knowledge items container (hidden by default)
+    var itemsContainer = document.createElement('div');
+    itemsContainer.className = 'tree-node__items';
+    itemsContainer.style.display = 'none';
+    el.appendChild(itemsContainer);
+
     // Animate bar fill after insertion
     requestAnimationFrame(function () {
       requestAnimationFrame(function () {
@@ -476,6 +715,32 @@
     });
 
     return el;
+  }
+
+  function toggleNodeExpand(nodeId, el) {
+    if (state.expandedNodes.has(nodeId)) {
+      // Collapse
+      state.expandedNodes.delete(nodeId);
+      el.classList.remove('tree-node--expanded');
+      var itemsContainer = el.querySelector('.tree-node__items');
+      if (itemsContainer) {
+        itemsContainer.style.display = 'none';
+      }
+    } else {
+      // Expand
+      state.expandedNodes.add(nodeId);
+      el.classList.add('tree-node--expanded');
+      var itemsContainer = el.querySelector('.tree-node__items');
+      if (itemsContainer) {
+        // Clear and re-render items
+        itemsContainer.innerHTML = '';
+        var items = state.knowledgeMap.get(nodeId) || [];
+        items.forEach(function (item) {
+          itemsContainer.appendChild(renderKnowledgeItem(item));
+        });
+        itemsContainer.style.display = 'block';
+      }
+    }
   }
 
   function getDepth(node) {
