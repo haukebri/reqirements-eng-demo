@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RequirementsAI — Conversational Analysis</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div class="logo">Requirements<span class="logo-accent">AI</span></div>
+      <div class="session-info">Session: Product Data System Evaluation</div>
+    </header>
+
+    <main class="app-main">
+      <section class="chat-panel">
+        <div class="chat-messages" id="chatMessages">
+          <div class="message message--ai">
+            <div class="message__label">AI</div>
+            <div class="message__bubble">
+              Hi! I'm here to help you define your requirements. Tell me about the challenge you're facing — what's the problem you're trying to solve?
+            </div>
+          </div>
+        </div>
+        <div class="chat-input-bar">
+          <input type="text" id="chatInput" class="chat-input"
+                 placeholder="Type your message..."
+                 autocomplete="off">
+          <button id="sendBtn" class="chat-send-btn" aria-label="Send message">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 2L11 13"></path>
+              <path d="M22 2L15 22L11 13L2 9L22 2Z"></path>
+            </svg>
+          </button>
+        </div>
+      </section>
+
+      <aside class="tree-panel" id="treePanel">
+        <div class="tree-panel__header">
+          <h2 class="tree-panel__title">Feature Tree</h2>
+          <button class="tree-panel__toggle" id="treePanelToggle" aria-label="Toggle tree panel">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 18L15 12L9 6"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="tree-panel__content" id="treeContent">
+          <div class="tree-empty" id="treeEmpty">
+            <p>No features captured yet.</p>
+            <p class="tree-empty__hint">Start the conversation to see the feature tree build in real time.</p>
+          </div>
+          <div class="tree-nodes" id="treeNodes"></div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <script src="scenario.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
