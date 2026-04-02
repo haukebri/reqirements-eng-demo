@@ -1,8 +1,8 @@
 import { Router, Request, Response } from "express";
 import { db } from "../db/connection";
-import { messages, knowledgeItems } from "../db/schema";
+import { messages } from "../db/schema";
 import { eq } from "drizzle-orm";
-import { getStubResponse } from "../services/stub.service";
+import { processChat } from "../services/llm.service";
 
 export const chatRouter = Router();
 
@@ -23,9 +23,11 @@ chatRouter.post(
       return;
     }
 
+    const sessionId = req.params.sessionId as string;
+
     // Persist user message
     await db.insert(messages).values({
-      sessionId: req.params.sessionId as string,
+      sessionId,
       role: "user",
       content: message,
       agent: null,
@@ -37,48 +39,32 @@ chatRouter.post(
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
 
-    const stub = getStubResponse(message);
     let fullResponse = "";
 
-    // Stream message chunks
-    for (const chunk of stub.messageChunks) {
-      sseWrite(res, "message_chunk", { text: chunk });
-      fullResponse += chunk;
-      // Simulate streaming delay (50ms between chunks)
-      await new Promise((resolve) => setTimeout(resolve, 50));
+    try {
+      for await (const event of processChat(sessionId, message)) {
+        if (event.type === "message_chunk") {
+          sseWrite(res, "message_chunk", { text: event.text });
+          fullResponse += event.text;
+        } else if (event.type === "tree_mutation") {
+          sseWrite(res, "tree_mutation", event.mutation);
+        } else if (event.type === "knowledge_item") {
+          sseWrite(res, "knowledge_item", { nodeId: event.nodeId, item: event.item });
+        } else if (event.type === "done") {
+          // Persist assistant message
+          await db.insert(messages).values({
+            sessionId,
+            role: "assistant",
+            content: fullResponse,
+            agent: "conversation",
+          });
+          sseWrite(res, "done", {});
+        }
+      }
+    } catch (err) {
+      sseWrite(res, "error", { message: err instanceof Error ? err.message : "Unknown error" });
     }
 
-    // Emit tree mutations
-    for (const mutation of stub.treeMutations) {
-      sseWrite(res, "tree_mutation", mutation as Record<string, unknown>);
-    }
-
-    // Emit knowledge items and persist them
-    for (const kItem of stub.knowledgeItems) {
-      const [persisted] = await db
-        .insert(knowledgeItems)
-        .values({
-          nodeId: kItem.nodeId,
-          type: kItem.type,
-          text: kItem.text,
-          source: kItem.source,
-        })
-        .returning();
-      sseWrite(res, "knowledge_item", {
-        nodeId: kItem.nodeId,
-        item: persisted,
-      });
-    }
-
-    // Persist assistant message
-    await db.insert(messages).values({
-      sessionId: req.params.sessionId as string,
-      role: "assistant",
-      content: fullResponse,
-      agent: "conversation",
-    });
-
-    sseWrite(res, "done", {});
     res.end();
   }
 );
