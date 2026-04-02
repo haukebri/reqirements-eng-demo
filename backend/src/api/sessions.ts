@@ -23,7 +23,7 @@ sessionsRouter.get("/:id", async (req: Request, res: Response) => {
   const [session] = await db
     .select()
     .from(sessions)
-    .where(eq(sessions.id, req.params.id));
+    .where(eq(sessions.id, req.params.id as string));
   if (!session) {
     res.status(404).json({ error: "Session not found" });
     return;
@@ -32,6 +32,6 @@ sessionsRouter.get("/:id", async (req: Request, res: Response) => {
 });
 
 sessionsRouter.delete("/:id", async (req: Request, res: Response) => {
-  await db.delete(sessions).where(eq(sessions.id, req.params.id));
+  await db.delete(sessions).where(eq(sessions.id, req.params.id as string));
   res.status(204).send();
 });

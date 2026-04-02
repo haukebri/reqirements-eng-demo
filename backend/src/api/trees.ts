@@ -14,7 +14,7 @@ treesRouter.get(
     const nodes = await db
       .select()
       .from(treeNodes)
-      .where(eq(treeNodes.sessionId, req.params.sessionId))
+      .where(eq(treeNodes.sessionId, req.params.sessionId as string))
       .orderBy(treeNodes.createdAt);
     res.json(nodes);
   }
@@ -35,7 +35,7 @@ treesRouter.post(
     const [node] = await db
       .insert(treeNodes)
       .values({
-        sessionId: req.params.sessionId,
+        sessionId: req.params.sessionId as string,
         name,
         parentId: parentId ?? null,
         score: score ?? 0,
@@ -59,7 +59,7 @@ treesRouter.patch("/nodes/:id", async (req: Request, res: Response) => {
   const [updated] = await db
     .update(treeNodes)
     .set(updates)
-    .where(eq(treeNodes.id, req.params.id))
+    .where(eq(treeNodes.id, req.params.id as string))
     .returning();
   if (!updated) {
     res.status(404).json({ error: "Node not found" });
@@ -69,7 +69,7 @@ treesRouter.patch("/nodes/:id", async (req: Request, res: Response) => {
 });
 
 treesRouter.delete("/nodes/:id", async (req: Request, res: Response) => {
-  await db.delete(treeNodes).where(eq(treeNodes.id, req.params.id));
+  await db.delete(treeNodes).where(eq(treeNodes.id, req.params.id as string));
   res.status(204).send();
 });
 
@@ -81,7 +81,7 @@ treesRouter.get(
     const items = await db
       .select()
       .from(knowledgeItems)
-      .where(eq(knowledgeItems.nodeId, req.params.nodeId))
+      .where(eq(knowledgeItems.nodeId, req.params.nodeId as string))
       .orderBy(knowledgeItems.createdAt);
     res.json(items);
   }
@@ -102,7 +102,7 @@ treesRouter.post(
     const [item] = await db
       .insert(knowledgeItems)
       .values({
-        nodeId: req.params.nodeId,
+        nodeId: req.params.nodeId as string,
         type,
         text,
         source: source ?? null,
@@ -124,7 +124,7 @@ treesRouter.patch("/items/:id", async (req: Request, res: Response) => {
   const [updated] = await db
     .update(knowledgeItems)
     .set(updates)
-    .where(eq(knowledgeItems.id, req.params.id))
+    .where(eq(knowledgeItems.id, req.params.id as string))
     .returning();
   if (!updated) {
     res.status(404).json({ error: "Item not found" });
@@ -134,6 +134,6 @@ treesRouter.patch("/items/:id", async (req: Request, res: Response) => {
 });
 
 treesRouter.delete("/items/:id", async (req: Request, res: Response) => {
-  await db.delete(knowledgeItems).where(eq(knowledgeItems.id, req.params.id));
+  await db.delete(knowledgeItems).where(eq(knowledgeItems.id, req.params.id as string));
   res.status(204).send();
 });

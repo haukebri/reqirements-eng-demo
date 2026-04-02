@@ -25,7 +25,7 @@ chatRouter.post(
 
     // Persist user message
     await db.insert(messages).values({
-      sessionId: req.params.sessionId,
+      sessionId: req.params.sessionId as string,
       role: "user",
       content: message,
       agent: null,
@@ -72,7 +72,7 @@ chatRouter.post(
 
     // Persist assistant message
     await db.insert(messages).values({
-      sessionId: req.params.sessionId,
+      sessionId: req.params.sessionId as string,
       role: "assistant",
       content: fullResponse,
       agent: "conversation",
@@ -90,7 +90,7 @@ chatRouter.get(
     const msgs = await db
       .select()
       .from(messages)
-      .where(eq(messages.sessionId, req.params.sessionId))
+      .where(eq(messages.sessionId, req.params.sessionId as string))
       .orderBy(messages.createdAt);
     res.json(msgs);
   }
