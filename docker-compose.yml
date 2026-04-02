@@ -1,0 +1,32 @@
+services:
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: reqai
+      POSTGRES_PASSWORD: reqai
+      POSTGRES_DB: reqai
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reqai"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    ports:
+      - "3001:3001"
+    environment:
+      DATABASE_URL: postgres://reqai:reqai@db:5432/reqai
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY}
+      NODE_ENV: production
+      PORT: 3001
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "node backend/dist/src/db/migrate.js && node backend/dist/src/index.js"
+
+volumes:
+  postgres_data:

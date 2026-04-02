@@ -1,7 +1,11 @@
 (function () {
   'use strict';
 
-  var API_BASE = 'http://localhost:3001/api';
+  // In production (served by Express), use relative path. In dev (port 3000/5500 or file://), fall back to explicit backend URL.
+  var DEV_PORTS = ['3000', '5500'];
+  var API_BASE = window.location.protocol === 'file:' || DEV_PORTS.indexOf(window.location.port) !== -1
+    ? 'http://localhost:3001/api'
+    : window.location.origin + '/api';
 
   // === State ===
   var state = {
