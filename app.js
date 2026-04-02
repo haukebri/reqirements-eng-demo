@@ -1,28 +1,29 @@
 (function () {
   'use strict';
 
+  var API_BASE = 'http://localhost:3001/api';
+
   // === State ===
-  const state = {
-    currentStep: 0,
+  var state = {
+    sessionId: null,
     nodeMap: new Map(),
     rootIds: [],
     isProcessing: false,
-    conversationFinished: false,
-    knowledgeMap: new Map(),    // nodeId -> [{id, type, text, source, resolved}]
-    expandedNodes: new Set()    // nodeIds currently expanded in tree
+    knowledgeMap: new Map(),
+    expandedNodes: new Set()
   };
 
   // === DOM refs ===
-  const chatMessages = document.getElementById('chatMessages');
-  const chatInput = document.getElementById('chatInput');
-  const sendBtn = document.getElementById('sendBtn');
-  const treePanel = document.getElementById('treePanel');
-  const treePanelToggle = document.getElementById('treePanelToggle');
-  const treeEmpty = document.getElementById('treeEmpty');
-  const treeNodes = document.getElementById('treeNodes');
+  var chatMessages = document.getElementById('chatMessages');
+  var chatInput = document.getElementById('chatInput');
+  var sendBtn = document.getElementById('sendBtn');
+  var treePanel = document.getElementById('treePanel');
+  var treePanelToggle = document.getElementById('treePanelToggle');
+  var treeEmpty = document.getElementById('treeEmpty');
+  var treeNodes = document.getElementById('treeNodes');
 
   // === Init ===
-  function init() {
+  async function init() {
     sendBtn.addEventListener('click', handleSend);
     chatInput.addEventListener('keydown', function (e) {
       if (e.key === 'Enter' && !e.shiftKey) {
@@ -32,20 +33,24 @@
     });
     treePanelToggle.addEventListener('click', toggleTreePanel);
 
-    prefillInput();
+    try {
+      var res = await fetch(API_BASE + '/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'RequirementsAI Session' })
+      });
+      var session = await res.json();
+      state.sessionId = session.id;
+    } catch (e) {
+      console.error('Failed to create session:', e);
+    }
+
     chatInput.focus();
   }
 
-  function prefillInput() {
-    var step = SCENARIO.steps[state.currentStep];
-    if (step) {
-      chatInput.value = step.suggestedInput;
-    }
-  }
-
   // === Chat Engine ===
-  function handleSend() {
-    if (state.isProcessing) return;
+  async function handleSend() {
+    if (state.isProcessing || !state.sessionId) return;
 
     var text = chatInput.value.trim();
     if (!text) return;
@@ -55,137 +60,97 @@
     chatInput.value = '';
 
     appendMessage('user', text);
+    showTypingIndicator('ai');
 
-    var matchedStep = matchStep(text);
-    if (matchedStep) {
-      playScriptedResponse(matchedStep);
-    } else {
-      playFallback();
-    }
-  }
-
-  function matchStep(text) {
-    if (state.conversationFinished) return null;
-
-    var step = SCENARIO.steps[state.currentStep];
-    if (!step) return null;
-
-    var lower = text.toLowerCase();
-    var matched = step.keywords.some(function (kw) {
-      return lower.indexOf(kw.toLowerCase()) !== -1;
-    });
-
-    return matched ? step : null;
-  }
-
-  function playScriptedResponse(step) {
-    showTypingIndicator();
-
-    var aiDelay = 800 + Math.random() * 600;
-    setTimeout(function () {
-      removeTypingIndicator();
-      appendMessage('ai', step.aiResponse);
-
-      if (step.architectInterjection) {
-        var archDelay = step.architectInterjection.delay || 1500;
-        setTimeout(function () {
-          showTypingIndicator('architect');
-          setTimeout(function () {
-            removeTypingIndicator();
-            appendMessage('architect', step.architectInterjection.text);
-            applyTreeMutations(step.treeMutations);
-
-            if (step.isFork && step.forkOptions) {
-              renderForkOptions(step.forkOptions);
-              // Do NOT advanceStep — wait for user to pick an option
-              state.isProcessing = false;
-              sendBtn.disabled = false;
-            } else {
-              advanceStep();
-            }
-          }, 600);
-        }, archDelay);
-      } else {
-        applyTreeMutations(step.treeMutations);
-
-        if (step.isFork && step.forkOptions) {
-          renderForkOptions(step.forkOptions);
-          // Do NOT advanceStep — wait for user to pick an option
-          state.isProcessing = false;
-          sendBtn.disabled = false;
-        } else {
-          advanceStep();
-        }
-      }
-    }, aiDelay);
-  }
-
-  function advanceStep() {
-    state.currentStep++;
-    if (state.currentStep >= SCENARIO.steps.length) {
-      state.conversationFinished = true;
-      state.isProcessing = false;
-      sendBtn.disabled = false;
-      chatInput.placeholder = 'Conversation complete — review the feature tree.';
-    } else {
-      var nextStep = SCENARIO.steps[state.currentStep];
-      if (nextStep && nextStep.isFork) {
-        // Auto-play fork steps without requiring user input
-        state.isProcessing = true;
-        playScriptedResponse(nextStep);
-      } else {
-        state.isProcessing = false;
-        sendBtn.disabled = false;
-        prefillInput();
-        chatInput.focus();
-      }
-    }
-  }
-
-  function playFallback() {
-    showTypingIndicator();
-
-    setTimeout(function () {
-      removeTypingIndicator();
-      var responses = SCENARIO.fallbackResponses;
-      var text = responses[Math.floor(Math.random() * responses.length)];
-      appendMessage('ai', text);
-
-      state.isProcessing = false;
-      sendBtn.disabled = false;
-      prefillInput();
-      chatInput.focus();
-    }, 900);
-  }
-
-  // === Fork Rendering ===
-  function renderForkOptions(options) {
-    var container = document.createElement('div');
-    container.className = 'fork-options';
-
-    options.forEach(function (option) {
-      var btn = document.createElement('button');
-      btn.className = 'fork-option';
-      btn.textContent = option.label;
-      btn.addEventListener('click', function () {
-        container.remove();
-        appendMessage('user', option.label);
-        state.currentStep++;
-        if (state.currentStep >= SCENARIO.steps.length) {
-          state.conversationFinished = true;
-          chatInput.placeholder = 'Conversation complete — review the feature tree.';
-        } else {
-          prefillInput();
-          chatInput.focus();
-        }
-        state.isProcessing = false;
-        sendBtn.disabled = false;
+    try {
+      var response = await fetch(API_BASE + '/sessions/' + state.sessionId + '/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text })
       });
-      container.appendChild(btn);
-    });
 
-    chatMessages.appendChild(container);
+      if (!response.ok) {
+        removeTypingIndicator();
+        appendMessage('ai', 'Sorry, something went wrong. Please try again.');
+        state.isProcessing = false;
+        sendBtn.disabled = false;
+        chatInput.focus();
+        return;
+      }
+
+      var reader = response.body.getReader();
+      var decoder = new TextDecoder();
+      var buffer = '';
+      var aiMessageBubble = null;
+      var aiMessageText = '';
+      var eventType = null;
+
+      while (true) {
+        var result = await reader.read();
+        if (result.done) break;
+
+        buffer += decoder.decode(result.value, { stream: true });
+        var lines = buffer.split('\n');
+        buffer = lines.pop(); // keep incomplete line in buffer
+
+        for (var i = 0; i < lines.length; i++) {
+          var line = lines[i];
+          if (line.startsWith('event: ')) {
+            eventType = line.slice(7).trim();
+          } else if (line.startsWith('data: ')) {
+            var data = JSON.parse(line.slice(6));
+            if (eventType === 'message_chunk') {
+              if (!aiMessageBubble) {
+                removeTypingIndicator();
+                aiMessageBubble = createStreamingMessageBubble();
+              }
+              aiMessageText += data.text;
+              aiMessageBubble.textContent = aiMessageText;
+              scrollToBottom();
+            } else if (eventType === 'tree_mutation') {
+              treeEmpty.style.display = 'none';
+              executeMutation(data);
+            } else if (eventType === 'knowledge_item') {
+              handleAddItems(data.nodeId, [data.item]);
+            }
+            // 'done' event requires no action
+            eventType = null;
+          }
+        }
+      }
+
+      // If no chunks were received, remove dangling typing indicator
+      if (!aiMessageBubble) {
+        removeTypingIndicator();
+      }
+    } catch (e) {
+      console.error('Chat error:', e);
+      removeTypingIndicator();
+      appendMessage('ai', 'Sorry, something went wrong. Please try again.');
+    }
+
+    state.isProcessing = false;
+    sendBtn.disabled = false;
+    chatInput.focus();
+  }
+
+  function createStreamingMessageBubble() {
+    var msg = document.createElement('div');
+    msg.className = 'message message--ai';
+
+    var label = document.createElement('div');
+    label.className = 'message__label';
+    label.textContent = 'AI';
+
+    var bubble = document.createElement('div');
+    bubble.className = 'message__bubble';
+
+    msg.appendChild(label);
+    msg.appendChild(bubble);
+    chatMessages.appendChild(msg);
     scrollToBottom();
+
+    return bubble;
   }
 
   // === Message Rendering ===
@@ -260,7 +225,6 @@
       id: nodeData.id,
       name: nodeData.name,
       score: nodeData.score || 0,
-
       parentId: nodeData.parent,
       children: []
     };
@@ -283,7 +247,6 @@
     var node = findNode(id);
     if (!node) return;
 
-    // Remove from parent's children
     if (node.parentId) {
       var parent = findNode(node.parentId);
       if (parent) {
@@ -293,11 +256,9 @@
       state.rootIds = state.rootIds.filter(function (rid) { return rid !== id; });
     }
 
-    // Clean up knowledge data
     state.knowledgeMap.delete(id);
     state.expandedNodes.delete(id);
 
-    // Remove children recursively
     node.children.forEach(function (cid) { removeNode(cid); });
     state.nodeMap.delete(id);
   }
@@ -306,15 +267,12 @@
   function applyTreeMutations(mutations) {
     if (!mutations || mutations.length === 0) return;
 
-    // Hide empty state
     treeEmpty.style.display = 'none';
 
-    // Split into phases: removes, transition, then other actions
     var removes = mutations.filter(function (m) { return m.action === 'remove'; });
     var transition = mutations.filter(function (m) { return m.action === 'transition'; })[0] || null;
     var others = mutations.filter(function (m) { return m.action !== 'remove' && m.action !== 'transition'; });
 
-    // Execute removes first (staggered)
     var removeDelay = 0;
     removes.forEach(function (mutation) {
       setTimeout(function () {
@@ -323,7 +281,6 @@
       removeDelay += 150;
     });
 
-    // If there's a transition overlay, show it after removes
     var transitionDuration = 0;
     if (transition) {
       transitionDuration = transition.duration || 2500;
@@ -336,7 +293,6 @@
       }, transitionStart + transitionDuration);
     }
 
-    // Then other mutations after removes + transition complete
     var otherStartDelay = removes.length > 0 ? removeDelay + 200 : 0;
     if (transition) {
       otherStartDelay = (removes.length > 0 ? removeDelay + 400 : 0) + transitionDuration + 200;
@@ -412,7 +368,6 @@
     var el = treeNodes.querySelector('[data-id="' + targetId + '"]');
     if (!el) return;
 
-    // If node is expanded, render new items into the items container
     if (state.expandedNodes.has(targetId)) {
       var itemsContainer = el.querySelector('.tree-node__items');
       if (itemsContainer) {
@@ -420,7 +375,6 @@
           var kiEl = renderKnowledgeItem(item);
           kiEl.classList.add('ki--new');
           itemsContainer.appendChild(kiEl);
-          // Remove highlight after 1500ms
           setTimeout(function () {
             kiEl.classList.remove('ki--new');
           }, 1500);
@@ -442,7 +396,6 @@
       }
     }
 
-    // Update DOM if visible
     var el = treeNodes.querySelector('[data-id="' + targetId + '"]');
     if (el) {
       var kiEl = el.querySelector('[data-ki-id="' + itemId + '"]');
@@ -544,17 +497,14 @@
     var depth = getDepth(node);
     var el = createNodeElement(node, depth);
 
-    // Initialize knowledge map entry
     state.knowledgeMap.set(node.id, []);
 
-    // Find insertion point
     var parentEl = null;
     if (node.parentId) {
       parentEl = treeNodes.querySelector('[data-id="' + node.parentId + '"]');
     }
 
     if (parentEl) {
-      // Insert after parent and all its existing children
       var sibling = parentEl.nextElementSibling;
       while (sibling && parseInt(sibling.dataset.depth) > parseInt(parentEl.dataset.depth)) {
         sibling = sibling.nextElementSibling;
@@ -568,7 +518,6 @@
       treeNodes.appendChild(el);
     }
 
-    // Animate in
     el.classList.add('tree-node--entering');
     requestAnimationFrame(function () {
       requestAnimationFrame(function () {
@@ -618,7 +567,6 @@
   function handleRemove(targetId) {
     var el = treeNodes.querySelector('[data-id="' + targetId + '"]');
     if (el) {
-      // Also find and remove child elements
       var node = findNode(targetId);
       if (node) {
         node.children.forEach(function (cid) {
@@ -631,7 +579,6 @@
 
       el.classList.add('tree-node--removing');
       setTimeout(function () {
-        // Remove child elements
         if (node) {
           node.children.forEach(function (cid) {
             var childEl = treeNodes.querySelector('[data-id="' + cid + '"]');
@@ -654,7 +601,6 @@
     el.dataset.depth = depth;
     el.style.paddingLeft = (depth * 20 + 12) + 'px';
 
-    // Header row (toggle + name + count badge)
     var header = document.createElement('div');
     header.className = 'tree-node__header';
 
@@ -673,14 +619,12 @@
     countBadge.style.display = 'none';
     header.appendChild(countBadge);
 
-    // Click handler for expand/collapse
     header.addEventListener('click', function () {
       toggleNodeExpand(node.id, el);
     });
 
     el.appendChild(header);
 
-    // Bar row (track + score)
     var barRow = document.createElement('div');
     barRow.className = 'tree-node__bar-row';
 
@@ -701,13 +645,11 @@
 
     el.appendChild(barRow);
 
-    // Knowledge items container (hidden by default)
     var itemsContainer = document.createElement('div');
     itemsContainer.className = 'tree-node__items';
     itemsContainer.style.display = 'none';
     el.appendChild(itemsContainer);
 
-    // Animate bar fill after insertion
     requestAnimationFrame(function () {
       requestAnimationFrame(function () {
         barFill.style.width = node.score + '%';
@@ -719,7 +661,6 @@
 
   function toggleNodeExpand(nodeId, el) {
     if (state.expandedNodes.has(nodeId)) {
-      // Collapse
       state.expandedNodes.delete(nodeId);
       el.classList.remove('tree-node--expanded');
       var itemsContainer = el.querySelector('.tree-node__items');
@@ -727,12 +668,10 @@
         itemsContainer.style.display = 'none';
       }
     } else {
-      // Expand
       state.expandedNodes.add(nodeId);
       el.classList.add('tree-node--expanded');
       var itemsContainer = el.querySelector('.tree-node__items');
       if (itemsContainer) {
-        // Clear and re-render items
         itemsContainer.innerHTML = '';
         var items = state.knowledgeMap.get(nodeId) || [];
         items.forEach(function (item) {
