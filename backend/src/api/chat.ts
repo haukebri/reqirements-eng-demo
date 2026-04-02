@@ -17,6 +17,11 @@ function sseWrite(
 chatRouter.post(
   "/sessions/:sessionId/chat",
   async (req: Request, res: Response) => {
+    if (!process.env.MISTRAL_API_KEY) {
+      res.status(503).json({ error: "AI service unavailable: MISTRAL_API_KEY is not configured" });
+      return;
+    }
+
     const { message } = req.body as { message?: string };
     if (!message) {
       res.status(400).json({ error: "message is required" });

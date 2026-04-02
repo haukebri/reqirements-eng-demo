@@ -66,71 +66,98 @@
     appendMessage('user', text);
     showTypingIndicator('ai');
 
-    try {
-      var response = await fetch(API_BASE + '/sessions/' + state.sessionId + '/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text })
-      });
+    var maxRetries = 3;
+    var retryDelay = 1000;
 
-      if (!response.ok) {
-        removeTypingIndicator();
-        appendMessage('ai', 'Sorry, something went wrong. Please try again.');
-        state.isProcessing = false;
-        sendBtn.disabled = false;
-        chatInput.focus();
-        return;
+    for (var attempt = 0; attempt <= maxRetries; attempt++) {
+      if (attempt > 0) {
+        await new Promise(function (resolve) { setTimeout(resolve, retryDelay); });
+        retryDelay *= 2;
+        showTypingIndicator('ai');
       }
 
-      var reader = response.body.getReader();
-      var decoder = new TextDecoder();
-      var buffer = '';
-      var aiMessageBubble = null;
-      var aiMessageText = '';
-      var eventType = null;
+      var networkError = false;
 
-      while (true) {
-        var result = await reader.read();
-        if (result.done) break;
+      try {
+        var response = await fetch(API_BASE + '/sessions/' + state.sessionId + '/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: text })
+        });
 
-        buffer += decoder.decode(result.value, { stream: true });
-        var lines = buffer.split('\n');
-        buffer = lines.pop(); // keep incomplete line in buffer
+        if (!response.ok) {
+          removeTypingIndicator();
+          var errMsg = response.status === 503
+            ? 'AI service is unavailable. Please check the server configuration.'
+            : 'Sorry, something went wrong. Please try again.';
+          appendMessage('ai', errMsg);
+          break; // non-retryable HTTP error
+        }
 
-        for (var i = 0; i < lines.length; i++) {
-          var line = lines[i];
-          if (line.startsWith('event: ')) {
-            eventType = line.slice(7).trim();
-          } else if (line.startsWith('data: ')) {
-            var data = JSON.parse(line.slice(6));
-            if (eventType === 'message_chunk') {
-              if (!aiMessageBubble) {
+        var reader = response.body.getReader();
+        var decoder = new TextDecoder();
+        var buffer = '';
+        var aiMessageBubble = null;
+        var aiMessageText = '';
+        var eventType = null;
+        var sseError = false;
+
+        while (true) {
+          var result = await reader.read();
+          if (result.done) break;
+
+          buffer += decoder.decode(result.value, { stream: true });
+          var lines = buffer.split('\n');
+          buffer = lines.pop(); // keep incomplete line in buffer
+
+          for (var i = 0; i < lines.length; i++) {
+            var line = lines[i];
+            if (line.startsWith('event: ')) {
+              eventType = line.slice(7).trim();
+            } else if (line.startsWith('data: ')) {
+              var data = JSON.parse(line.slice(6));
+              if (eventType === 'message_chunk') {
+                if (!aiMessageBubble) {
+                  removeTypingIndicator();
+                  aiMessageBubble = createStreamingMessageBubble();
+                }
+                aiMessageText += data.text;
+                aiMessageBubble.textContent = aiMessageText;
+                scrollToBottom();
+              } else if (eventType === 'tree_mutation') {
+                treeEmpty.style.display = 'none';
+                executeMutation(data);
+              } else if (eventType === 'knowledge_item') {
+                handleAddItems(data.nodeId, [data.item]);
+              } else if (eventType === 'error') {
                 removeTypingIndicator();
-                aiMessageBubble = createStreamingMessageBubble();
+                appendMessage('ai', 'Error: ' + (data.message || 'Something went wrong. Please try again.'));
+                sseError = true;
               }
-              aiMessageText += data.text;
-              aiMessageBubble.textContent = aiMessageText;
-              scrollToBottom();
-            } else if (eventType === 'tree_mutation') {
-              treeEmpty.style.display = 'none';
-              executeMutation(data);
-            } else if (eventType === 'knowledge_item') {
-              handleAddItems(data.nodeId, [data.item]);
+              // 'done' event requires no action
+              eventType = null;
             }
-            // 'done' event requires no action
-            eventType = null;
+            if (sseError) break;
           }
+          if (sseError) break;
+        }
+
+        // If no chunks were received, remove dangling typing indicator
+        if (!aiMessageBubble && !sseError) {
+          removeTypingIndicator();
+        }
+      } catch (e) {
+        networkError = true;
+        console.error('Chat error (attempt ' + (attempt + 1) + '):', e);
+        removeTypingIndicator();
+        if (attempt < maxRetries) {
+          appendMessage('ai', 'Connection lost. Reconnecting... (' + (attempt + 1) + '/' + maxRetries + ')');
+        } else {
+          appendMessage('ai', 'Connection failed after ' + maxRetries + ' retries. Please try again.');
         }
       }
 
-      // If no chunks were received, remove dangling typing indicator
-      if (!aiMessageBubble) {
-        removeTypingIndicator();
-      }
-    } catch (e) {
-      console.error('Chat error:', e);
-      removeTypingIndicator();
-      appendMessage('ai', 'Sorry, something went wrong. Please try again.');
+      if (!networkError) break; // success, HTTP error, or SSE error — do not retry
     }
 
     state.isProcessing = false;
@@ -591,9 +618,15 @@
         }
         el.remove();
         removeNode(targetId);
+        if (state.rootIds.length === 0) {
+          treeEmpty.style.display = '';
+        }
       }, 350);
     } else {
       removeNode(targetId);
+      if (state.rootIds.length === 0) {
+        treeEmpty.style.display = '';
+      }
     }
   }
 

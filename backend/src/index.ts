@@ -23,7 +23,7 @@ app.use("/api", treesRouter);
 app.use("/api", chatRouter);
 
 app.get("/api/health", (_req, res) => {
-  res.json({ status: "ok" });
+  res.json({ status: "ok", mistral: !!process.env.MISTRAL_API_KEY });
 });
 
 if (process.env.NODE_ENV === "production") {
